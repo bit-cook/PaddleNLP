@@ -3982,6 +3982,7 @@ function llama_baichuan_dygraph_auto_sp_async_reduce_scatter_bs8_bf16_DP4-MP2-SP
         export PYTHONPATH=$root_path/:$PYTHONPATH
         export FLAGS_call_stack_level=3
         export GLOG_minloglevel=3
+        # export GLOG_v=6
         export NVIDIA_TF32_OVERRIDE=0
 
         export CUDA_DEVICE_MAX_CONNECTIONS=1
@@ -4041,13 +4042,14 @@ function llama_baichuan_dygraph_auto_sp_async_reduce_scatter_bs8_bf16_DP4-MP2-SP
     "amp_master_grad": true,
     "fuse_attention_ffn": true,
     "fuse_attention_qkv": true,
-    "use_flash_attention": true,
-    "fused_linear": 1,
+    "use_flash_attention": false,
+    "fused_linear": true,
     "fused_linear_param_grad_add": 1,
+    "enable_linear_fused_grad_add": true,
     "use_fused_rope": true,
     "use_fused_rms_norm": true,
     "max_seq_length": 1024,
-    "sequence_parallel": 1,
+    "sequence_parallel": true,
     "sharding": "stage1",
     "sharding_parallel_degree": 4,
     "sharding_parallel_config": "enable_tensor_fusion enable_overlap",
@@ -4067,9 +4069,9 @@ EOF
         ips=`cat $case_log_dir/workerlog.0 | grep 'global_step: 10,' | awk -F 'interval_tokens_per_second_per_device: ' '{print $2}' | awk -F ',' '{print $1}'`
         mem=`cat $case_log_dir/workerlog.0 | grep 'global_step: 10,' | awk -F 'max_memory_reserved: ' '{print $2}' | awk -F ',' '{print $1}'`
         echo "result: loss=$loss ips=$ips mem=$mem"
-        loss_base=10.8060318
-        ips_base=1228.4263
-        mem_base=17.393041372299194
+        loss_base=9.83012619
+        ips_base=1387.5543
+        mem_base=18.277684926986694
         check_result $FUNCNAME ${loss_base} ${loss} ${ips_base} ${ips} ${mem_base} ${mem}
         echo "=========== $FUNCNAME run  end ==========="
     fi
