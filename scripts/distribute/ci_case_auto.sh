@@ -288,7 +288,7 @@ function llama_dygraph_auto_bs4_bf16_SD2() {
                 --tensor_parallel_degree 1 \
                 --sharding "stage1" \
                 --data_parallel_config "enable_allreduce_avg_in_gradinent_scale gradient_sync_after_accumulate" \
-                --sharding_parallel_config $sharding_config \
+                --sharding_parallel_config "$sharding_config" \
                 --to_static 0 \
                 --amp_custom_black_list "reduce_sum" "c_softmax_with_cross_entropy" \
                 --amp_custom_white_list "lookup_table" "lookup_table_v2" \
@@ -301,7 +301,7 @@ function llama_dygraph_auto_bs4_bf16_SD2() {
             echo "case=$case_name sharding_config=$sharding_config acc_step=$acc_step"
             if [ "$case_name" = "default" ]; then
                 loss_base=9.23504105
-            elif [ "$case_name" = "tensor_fusion_overlap" ]; then
+            elif [[ "$case_name" =~ "tensor_fusion_overlap" ]]; then
                 if [ $acc_step -eq 1 ]; then
                     loss_base=9.23504868
                 else
@@ -1826,7 +1826,7 @@ function llama_align_dygraph_dy2st_pir_auto_grad_merge_bs2_fp32_DP1-MP1-PP1() {
         rm -rf $case_log_dir
         rm -rf ${log_path}/$FUNCNAME
 
-        /usr/bin/python -u -m paddle.distributed.launch \
+        python -u -m paddle.distributed.launch \
             --gpus "0" \
             --log_dir $case_log_dir \
             run_pretrain_auto.py \
@@ -2011,6 +2011,8 @@ function llama_align_dy2st_fthenb_and_vpp_auto_bs2_fp32_DP1-MP1-PP4() {
         fi
         echo "result: $pp_mode loss=$loss"
     done
+    loss_base_fthenb=10.24240494
+    loss_base_vpp=10.24149513  # Paddle PR#74530
     ips=-1
     mem=-1
     ips_base=-1
@@ -2018,7 +2020,10 @@ function llama_align_dy2st_fthenb_and_vpp_auto_bs2_fp32_DP1-MP1-PP4() {
     for step in $(seq 1 $max_step); do
         echo "step=$step fthenb loss: ${loss1_array[$step-1]}, vpp loss: ${loss2_array[$step-1]}"
     done
-    check_result $FUNCNAME ${loss1} ${loss2} ${ips_base} ${ips} ${mem_base} ${mem}
+    echo "FThenB check"
+    check_result $FUNCNAME ${loss_base_fthenb} ${loss1} ${ips_base} ${ips} ${mem_base} ${mem}
+    echo "VPP check"
+    check_result $FUNCNAME ${loss_base_vpp} ${loss2} ${ips_base} ${ips} ${mem_base} ${mem}
     echo "=========== $FUNCNAME run  end ==========="
 }
 
