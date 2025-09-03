@@ -633,6 +633,11 @@ class TrainingArguments:
         },
     )
 
+    load_sharded_model_remap_parameter_name: bool = field(
+        default=False,
+        metadata={"help": "Whether to remap parameter name when load_sharded_model = true."},
+    )
+
     tensor_parallel_degree: int = field(
         default=-1,
         metadata={
@@ -2039,6 +2044,11 @@ class TrainingArguments:
                 sharding_parallel_degree * tensor_parallel_degree * sep_parallel_degree * pipeline_parallel_degree
             )
 
+            if expert_parallel_degree > 1:
+                assert (
+                    self.expert_tensor_parallel_degree <= 1
+                ), "expert_tensor_parallel_degree > 1 is not supported when expert_parallel_degree > 1"
+
             assert not (
                 self.data_parallel_degree > 1 and expert_parallel_degree > 1
             ), f"Currently only support use expert_data_parallel strategy together with sharding_parallel strategy, but not with data_parallel strategy. Currently data_parallel_degree is {self.data_parallel_degree}."
@@ -2228,6 +2238,17 @@ class TrainingArguments:
             return 0
 
     @property
+    def expert_parallel_rank(self):
+        if self.use_hybrid_parallel:
+            hcg = fleet.get_hybrid_communicate_group()
+            if hasattr(hcg, "get_expert_parallel_rank"):
+                return max(hcg.get_expert_parallel_rank(), 0)
+            else:
+                return 0
+        else:
+            return 0
+
+    @property
     def context_parallel_rank(self):
         if self.use_hybrid_parallel:
             hcg = fleet.get_hybrid_communicate_group()
@@ -2252,7 +2273,7 @@ class TrainingArguments:
                 name.append(self._format_name("pp", self.pipeline_parallel_rank, self.pipeline_parallel_degree))
             if self.sharding_parallel_degree > 1:
                 name.append(self._format_name("shard", self.sharding_parallel_rank, self.sharding_parallel_degree))
-            if self.use_expert_parallel:
+            if self.use_expert_parallel and self.expert_parallel_degree <= 1:
                 name.append(self._format_name("moe", self.data_parallel_rank, self.data_parallel_degree))
             return "_".join(name)
         else:
@@ -2268,7 +2289,7 @@ class TrainingArguments:
                 name.append(self._format_name("tp", self.tensor_parallel_rank, self.tensor_parallel_degree))
             if self.pipeline_parallel_degree > 1:
                 name.append(self._format_name("pp", self.pipeline_parallel_rank, self.pipeline_parallel_degree))
-            if self.use_expert_parallel:
+            if self.use_expert_parallel and self.expert_parallel_degree <= 1:
                 name.append(self._format_name("moe", self.data_parallel_rank, self.data_parallel_degree))
             return "_".join(name)
 
@@ -2277,7 +2298,9 @@ class TrainingArguments:
                 return self._format_name("moe", self.data_parallel_rank, self.data_parallel_degree)
             return None
 
-    def sharded_name_suffix(self, shard_id=None, pp_id=None, moe_id=None):
+    def sharded_name_suffix(self, shard_id=None, pp_id=None, moe_id=None, sharding_parallel_degree=None):
+        if sharding_parallel_degree is None:
+            sharding_parallel_degree = self.sharding_parallel_degree
         if self.use_hybrid_parallel:
             name = []
             if self.tensor_parallel_degree > 1:
@@ -2287,12 +2310,12 @@ class TrainingArguments:
                     pp_id = self.pipeline_parallel_rank
                 assert isinstance(pp_id, int)
                 name.append(self._format_name("pp", pp_id, self.pipeline_parallel_degree))
-            if self.sharding_parallel_degree > 1:
+            if sharding_parallel_degree > 1:
                 if shard_id is None:
                     shard_id = self.sharding_parallel_rank
                 assert isinstance(shard_id, int)
-                name.append(self._format_name("shard", shard_id, self.sharding_parallel_degree))
-            if self.use_expert_parallel:
+                name.append(self._format_name("shard", shard_id, sharding_parallel_degree))
+            if self.use_expert_parallel and self.expert_parallel_degree <= 1:
                 if moe_id is None:
                     moe_id = self.data_parallel_rank
                 assert isinstance(moe_id, int)
@@ -2418,9 +2441,7 @@ class TrainingArguments:
     def should_load_sharding_stage1_model(self):
         if self.enable_auto_parallel:
             return False
-        return (
-            ShardingOption.SHARD_OP in self.sharding and self.sharding_parallel_degree > 1 and self.load_sharded_model
-        )
+        return self.load_sharded_model
 
     @property
     def should_load_dataset(self):

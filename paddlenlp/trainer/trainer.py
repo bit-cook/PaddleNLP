@@ -372,7 +372,13 @@ class Trainer:
         self.optimizer_grouped_parameters = None
         self.sharding_io = None
         if self.args.should_save_sharding_stage1_model or self.args.should_load_sharding_stage1_model:
-            self.sharding_io = ShardingIO(self.args, self.model, self.optimizer)
+            self.sharding_io = ShardingIO(
+                self.args,
+                self.model,
+                self.optimizer,
+                remap_parameter_name=self.args.load_sharded_model_remap_parameter_name,
+            )
+
         if self.args.unified_checkpoint:
             self.unified_checkpoint_handler = UnifiedCheckpointHandler(self.args)
 
@@ -805,9 +811,16 @@ class Trainer:
         if resume_from_checkpoint is not None:
             path = _add_variant(PADDLE_OPTIMIZER_NAME, self.args.optimizer_name_suffix)
             path = os.path.join(resume_from_checkpoint, path).replace("optimizer", "ema")
+            if self.args.zcc_save_ema_coef is not None and self.sharding_io is not None:
+                success, err_msg = self.sharding_io.check_same_strategy(resume_from_checkpoint)
+            else:
+                success, err_msg = True, None
             if os.path.exists(path):
-                logger.info(f"ZCC EMA load from {path}")
-                self.zcc_manager.set_ema_state_dict(path)
+                if success:
+                    logger.info(f"ZCC EMA load from {path}")
+                    self.zcc_manager.set_ema_state_dict(path)
+                else:
+                    logger.info(f"ZCC EMA does not load {path} because {err_msg}")
             else:
                 logger.info(f"ZCC EMA state dict not found, in: {path}")
 
