@@ -64,6 +64,7 @@ class LoRALinear(nn.Linear):
         lora_plus_scale: float = 1.0,
         pissa: bool = False,
         lora_use_mixer: bool = False,
+        mixer_num: int = 1,
         use_mora: bool = False,
         lorapro: bool = False,
         mp_moe: bool = False,
@@ -85,6 +86,7 @@ class LoRALinear(nn.Linear):
         self.merged = False
         self.pissa = pissa
         self.lora_use_mixer = lora_use_mixer
+        self.mixer_num = mixer_num
         self.lorapro = lorapro
 
         # Actual trainable parameters
@@ -118,14 +120,20 @@ class LoRALinear(nn.Linear):
                 ),
             )
             if self.lora_use_mixer:
-                self.lora_AB = self.create_parameter(
-                    shape=[r, r],
-                    dtype=self._dtype,
-                    is_bias=False,
-                    default_initializer=nn.initializer.KaimingUniform(
-                        negative_slope=math.sqrt(5), nonlinearity="leaky_relu"
-                    ),
-                )
+                for i in range(self.mixer_num):
+                    key = "lora_mixer_" + str(i)
+                    setattr(
+                        self,
+                        key,
+                        self.create_parameter(
+                            shape=[r, r],
+                            dtype=self._dtype,
+                            is_bias=False,
+                            default_initializer=nn.initializer.KaimingUniform(
+                                negative_slope=math.sqrt(5), nonlinearity="leaky_relu"
+                            ),
+                        ),
+                    )
             self.lora_B = self.create_parameter(
                 shape=[r, out_features],
                 dtype=self._dtype,
@@ -221,7 +229,7 @@ class LoRALinear(nn.Linear):
         if self.lora_use_mixer:
             lora_A = lora_A if lora_A is not None else self.lora_A
             lora_B = lora_B if lora_B is not None else self.lora_B
-            lora_AB = lora_AB if lora_AB is not None else self.lora_AB
+            lora_AB = lora_AB if lora_AB is not None else self.get_mixer_params(0)
             delta_weight = lora_A @ lora_AB @ lora_B * self.scaling
         elif self.use_mora:
             lora_A = lora_A if lora_A is not None else self.lora_A
@@ -256,18 +264,25 @@ class LoRALinear(nn.Linear):
 
         return delta_weight
 
+    def get_mixer_params(self, index):
+        key = "lora_mixer_" + str(index)
+        if index == self.mixer_num - 1:
+            return getattr(self, key)
+        else:
+            return getattr(self, key) @ self.get_mixer_params(index + 1)
+
     def merge(self):
         if not self.merged:
             delta_weight = self.get_delta_weight()
             new_weight = self.weight + delta_weight
-            self.weight.set_value(new_weight)
+            self.weight.set_value(new_weight.astype(self.weight.dtype))
             self.merged = True
 
     def unmerge(self):
         if self.merged:
             delta_weight = self.get_delta_weight()
             new_weight = self.weight - delta_weight
-            self.weight.set_value(new_weight)
+            self.weight.set_value(new_weight.astype(self.weight.dtype))
             self.merged = False
 
     def forward(self, input: paddle.Tensor, *args, **kwargs):
@@ -287,7 +302,9 @@ class LoRALinear(nn.Linear):
         else:
             result = F.linear(x=input, weight=self.weight, bias=self.bias, name=self.name)
             if self.lora_use_mixer:
-                result += (self.lora_dropout(input) @ self.lora_A @ self.lora_AB @ self.lora_B) * self.scaling
+                result += (
+                    self.lora_dropout(input) @ self.lora_A @ self.get_mixer_params(0) @ self.lora_B
+                ) * self.scaling
             else:
                 result += (self.lora_dropout(input) @ self.lora_A @ self.lora_B) * self.scaling
         return result
