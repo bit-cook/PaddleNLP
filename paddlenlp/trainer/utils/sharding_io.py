@@ -270,7 +270,7 @@ class GroupGetter:
 
 
 class ShardingIO:
-    def __init__(self, args, model, optimizer=None, hcg=None, remap_parameter_name=False):
+    def __init__(self, args, model, optimizer=None, hcg=None, remap_parameter_name=False, is_ema=False):
         self.args = args
         self.model = model
         self.optimizer = optimizer
@@ -282,6 +282,7 @@ class ShardingIO:
 
         self.remap_parameter_name = remap_parameter_name
         self.remapper = None
+        self.is_ema = is_ema
 
     def _get_remapper(self, checkpoint):
         if not self.remap_parameter_name:
@@ -395,6 +396,8 @@ class ShardingIO:
         """
         load state_dict of one shard from_checkpoint, Only load model state dict.
         """
+        if self.is_ema:
+            base_weight_name = base_weight_name.replace("model_state", "ema").replace("pdparams", "pdopt")
         file_path = os.path.join(resume_from_checkpoint, _add_variant(base_weight_name, weight_name_suffix))
         if not os.path.isfile(file_path):
             raise ValueError(f"Can't find a valid checkpoint at {resume_from_checkpoint}, no {file_path}")
@@ -402,17 +405,24 @@ class ShardingIO:
         logger.info(f"Loading model from {resume_from_checkpoint} .")
         # We load the model state dict on the CPU to avoid an OOM error.
         state_dict = paddle.load(file_path, return_numpy=True)
+        if self.is_ema:
+            state_dict.pop("master_weights", None)
         state_dict = self._remap_parameter_name(resume_from_checkpoint, state_dict, is_opt=False)
         return state_dict
 
     def _load_optimizer_state_of_one_shard(self, checkpoint, base_opt_name, optimizer_name_suffix, group_getter=None):
+        if self.is_ema:
+            base_opt_name = base_opt_name.replace("optimizer", "ema")
         optimizer_name = _add_variant(base_opt_name, optimizer_name_suffix)
         path = os.path.join(checkpoint, optimizer_name)
         logger.info(f"load optimizer state from {path}")
         if os.path.isfile(path):
+            opt_state = paddlenlp_load(path, map_location="cpu")
+            if self.is_ema:
+                opt_state = {"master_weights": opt_state.get("master_weights", {})}
             return self._remap_parameter_name(
                 checkpoint,
-                self._modify_ckpt_for_compatibility(paddlenlp_load(path, map_location="cpu")),
+                self._modify_ckpt_for_compatibility(opt_state),
                 is_opt=True,
             )
         logger.info(f"{path} not exists")
